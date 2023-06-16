@@ -258,6 +258,7 @@ begin
             'C': Halt(1);
             'I':
             begin
+                FillChar(BufPtr^, BytesPerSector, 0);
                 ReadSectorOrDie := False;
                 break;
             end;

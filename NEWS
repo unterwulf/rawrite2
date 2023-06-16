@@ -5,6 +5,7 @@ Version 2.0 (unreleased)
 Bugfixes
 --------
 * Fixed reading of read-only images.
+* Unread sectors in the image no longer contain garbage. They are zeroized now.
 
 Version 1.2 (8/5/2000)
 
