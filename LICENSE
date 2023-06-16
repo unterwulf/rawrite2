@@ -1,10 +1,3 @@
-Copyright 2000 Miguel Angel Alvarez <maacruz@navegalia.com>
-
-RAWRITE2 may be used and distributed under the GNU General Public License.
-
----------------------------------------------------------------------------
-
-
 		    GNU GENERAL PUBLIC LICENSE
 		       Version 2, June 1991
 
@@ -345,4 +338,3 @@ proprietary programs.  If your program is a subroutine library, you may
 consider it more useful to permit linking proprietary applications with the
 library.  If this is what you want to do, use the GNU Library General
 Public License instead of this License.
-
