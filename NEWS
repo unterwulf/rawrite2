@@ -7,6 +7,10 @@ Bugfixes
 * Fixed reading of read-only images.
 * Unread sectors in the image no longer contain garbage. They are zeroized now.
 
+New features
+------------
+* Added /I switch to ignore all reading errors without prompting.
+
 Version 1.2 (8/5/2000)
 
 New features

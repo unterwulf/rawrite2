@@ -52,6 +52,7 @@ var
     {parameters}
     Disk, NumOfHeads, NumOfSectors, NumOfTracks: Byte;
     BytesPerSector: Word;
+    IgnoreErrors: Boolean;
     RWSectorsFunc: TRWSectorsFunc;
 
 function ResetDisk: Byte; assembler;
@@ -245,8 +246,11 @@ begin
 
         if CanIgnore then
         begin
-            Write('   (R)etry (I)gnore (C)ancel?', #13);
-            Action := ExpectKeys('RIC');
+            if IgnoreErrors then Action := 'I' else
+            begin
+                Write('   (R)etry (I)gnore (C)ancel?', #13);
+                Action := ExpectKeys('RIC');
+            end;
         end
         else
         begin
@@ -479,11 +483,11 @@ WriteLn('Options:');
 WriteLn('       /Fxxx   for xxx size floppy (default 1.44 MB)');
 WriteLn('       /R      read size from sector 0 (only DOS floppies)');
 WriteLn('       /N      do not use BIOS, use DOS instead');
+WriteLn('       /I      ignore all reading errors without prompting');
 WriteLn('       /Txx    xx = number of tracks (max 84, default 80)');
 WriteLn('       /Sxx    xx = number of sectors (default 18)');
 WriteLn('       /Bxxx   xxx = sector size in bytes (default 512)');
 WriteLn('       /Hx     x = number of heads (1 or 2, default 2)');
-WriteLn;
 WriteLn('The destination disk must be previously formatted.');
 WriteLn('Note:  For non-standard formats you will need the 2m or fdread utilities.');
 WriteLn('       Unfortunately, Windows NT only supports standard floppy formats.');
@@ -655,6 +659,7 @@ begin
     { Default values. }
     RWSectorsFunc := RWSectorsBios;
     FindOutGeometry := False;
+    IgnoreErrors := False;
     NumOfTracks := 80;
     NumOfSectors := 18;
     NumOfHeads := 2;
@@ -708,6 +713,7 @@ begin
             end;
             'R': FindOutGeometry := True;
             'N': RWSectorsFunc := RWSectorsDos;
+            'I': IgnoreErrors := True;
             'F':
             case GetOptionValue(Arg) of
                 {defaults: NumOfTracks := 80; NumOfSectors := 18; NumOfHeads := 2}
