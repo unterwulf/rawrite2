@@ -3,8 +3,7 @@ Please see the LICENSE file for copyright information.
 ABSOLUTELY NO WARRANTY AT ALL. USE ONLY AT YOUR OWN RISK.
 
 RAWRITE2 is a floppy image file writer/creator. It is written in pascal and
-compiles with Turbo Pascal 6 or later. A port to free pascal is planned
-in the near future.
+compiles with Turbo Pascal 6 or later.
 
 This program was born to help installation of "one floppy" linux systems,
 like muLinux (http://sunsite.auc.dk/mulinux), tomsrtbt (http://www.toms.net),
@@ -29,13 +28,7 @@ Run rawrite2 with no parameters to get a help screen.
 
 LATEST VERSION
 
-Try at http://www.navegalia.com/personal/maacruz
-
-
-CONTACT
-
-Please feed donations, suggestions, bug reports, insults, and bribes back to:
-	Miguel Angel Alvarez <maacruz@navegalia.com>
+Try at https://github.com/unterwulf/rawrite2
 
 
 RELATED
@@ -48,11 +41,11 @@ fdformat is a well known DOS floppy format package, written by
 Christoph H. Hochst„tter. You can find it at many ftp sites.
 
 
-
 GREETINGS
 
+Miguel Angel Alvarez, the first author of this program
 Ciriaco Garcia de Celis, for 2m
-Christoph H. Hochst„tter, for fdformat. I took some ideas from here.
+Christoph H. Hochst„tter, for fdformat
 
 
 CHANGELOG
