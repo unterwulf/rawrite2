@@ -2,21 +2,23 @@ This program is distributed as free under the GNU PUBLIC LICENSE 2.0
 Please see the LICENSE file for copyright information.
 ABSOLUTELY NO WARRANTY AT ALL. USE ONLY AT YOUR OWN RISK.
 
-RAWRITE2 is a floppy image file writer/creator. It is written in pascal and
+RAWRITE2 is a floppy image file writer/creator. It is written in Pascal and
 compiles with Turbo Pascal 6 or later.
 
 This program was born to help installation of "one floppy" linux systems,
-like muLinux (http://sunsite.auc.dk/mulinux), tomsrtbt (http://www.toms.net),
+like muLinux (http://sunsite.auc.dk/mulinux), tomsrtbt (http://www.toms.net)
 etc.
 
 It is intended to allow the user to create raw images from a floppy or dump
 such images to floppy, supporting not only standard formats (360KB, 720KB or
 1.44 MB) but a lot more: all fdformat and 2m formats, and any other giving
 number of tracks and sectors.
+
 It runs actually under DOS 3.2 or later, Win9x and WinNT (since WinNT only
 supports standard formats you only will be able to use such formats under
 this inoperating system).
-To use 2m formats you will need to install the 2m tsr before using
+
+To use 2m formats you will need to install the 2m TSR before using
 rawrite2, but DOS 6.2 and later directly supports all fdformat formats.
 
 Since it writes raw images, you always have to supply the floppy format on
@@ -38,7 +40,7 @@ floppy, written by Ciriaco Garcia de Celis.
 You can find it at ftp://luna.gui.uva.es/pub/pc/2m
 
 fdformat is a well known DOS floppy format package, written by
-Christoph H. Hochst„tter. You can find it at many ftp sites.
+Christoph H. Hochst„tter. You can find it at many FTP sites.
 
 
 GREETINGS
