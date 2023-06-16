@@ -1,0 +1,69 @@
+This program is distributed as free under the GNU PUBLIC LICENSE 2.0
+Please see the LICENSE file for copyright information.
+ABSOLUTELY NO WARRANTY AT ALL. USE ONLY AT YOUR OWN RISK.
+
+RAWRITE2 is a floppy image file writer/creator. It is written in pascal and
+compiles with Turbo Pascal 6 or later. A port to free pascal is planned
+in the near future.
+
+This program was born to help installation of "one floppy" linux systems,
+like muLinux (http://sunsite.auc.dk/mulinux), tomsrtbt (http://www.toms.net),
+etc.
+
+It is intended to allow the user to create raw images from a floppy or dump
+such images to floppy, supporting not only standard formats (360KB, 720KB or
+1.44 MB) but a lot more: all fdformat and 2m formats, and any other giving
+number of tracks and sectors.
+It runs actually under DOS 3.2 or later, Win9x and WinNT (since WinNT only
+supports standard formats you only will be able to use such formats under
+this inoperating system).
+To use 2m formats you will need to install the 2m tsr before using
+rawrite2, but DOS 6.2 and later directly supports all fdformat formats.
+
+Since it writes raw images, you always have to supply the floppy format on
+a command line option. If the floppy is DOS (FAT) formatted, the program
+can be instructed to read the floppy size from the boot sector. If no size
+option is given, then a standard 1.44 MB floppy will be supposed.
+Run rawrite2 with no parameters to get a help screen.
+
+
+LATEST VERSION
+
+Try at http://www.navegalia.com/personal/maacruz
+
+
+CONTACT
+
+Please feed donations, suggestions, bug reports, insults, and bribes back to:
+	Miguel Angel Alvarez <maacruz@navegalia.com>
+
+
+RELATED
+
+2m is a great package which allows using up to 2 MB on a standard 1.44 MB
+floppy, written by Ciriaco Garcia de Celis.
+You can find it at ftp://luna.gui.uva.es/pub/pc/2m
+
+fdformat is a well known DOS floppy format package, written by
+Christoph H. Hochst„tter. You can find it at many ftp sites.
+
+
+
+GREETINGS
+
+Ciriaco Garcia de Celis, for 2m
+Christoph H. Hochst„tter, for fdformat. I took some ideas from here.
+
+
+CHANGELOG
+
+1.1: 8/5/2000
+Added a lot more of /Fxxx
+Added some more checking to detect hard disks and subst/network units
+Added /N switch to use dos int 25 & 26 instead BIOS int 13
+Now it can have several (max 10) input files if dumping image to floppy (works
+like unix command "cat file1 file2 ..fileN")
+The help screen have been expanded a bit.
+
+1.0: 23/4/2000
+First release published.
