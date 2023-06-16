@@ -2,6 +2,10 @@ rawrite2 NEWS -- History of user-visible changes
 
 Version 2.0 (unreleased)
 
+Bugfixes
+--------
+* Fixed reading of read-only images.
+
 Version 1.2 (8/5/2000)
 
 New features

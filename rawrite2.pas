@@ -435,6 +435,8 @@ procedure DoImageToDisk(NumOfFiles: Word; FindOutGeometry: Boolean);
 var DiskBS, ImageBS: TBootSector;
     ImageFile: File;
 begin
+    FileMode := 0; { We only read files in this mode. }
+
     if FindOutGeometry then
     begin
         ReadSectorOrDie(0, 0, 1, @DiskBS, False);
