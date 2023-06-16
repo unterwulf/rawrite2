@@ -1,554 +1,760 @@
-{$m 4096,32768,65536}
+{$m 8192, 32768, 65536}
 program rawrite2;
 
- uses dos;
+uses dos;
 
- type
-  TSector=array[0..1024]of byte;
+type
+    TSector = array [0..1024] of Byte;
+    TRW = (RW_read, RW_write);
 
- const
-   ntracksmax=84;
-   nheadsmax=2;
-   nsectorsmax=128;
-   bytessectormax=4096;
-
- var
-  diskerror:integer;
-
-  {buffers}
-  sector0,sector1:tsector;
-  psector:^tsector;
-  pistai:pointer;
-
-  {parameters}
-
-  drive:string;
-  path:array[1..10] of string;
-  imagef:file;
-  disco,nheads,nsectors,ntracks:byte;
-  totalsectores,bytessector,bytespista:word;
-  recon,disktoimage,nobios:boolean;
-
-  {temp vars}
-  i,j,k,l,m:integer;
-  s:longint;
-  nfiles:integer;
-  q:char;
-  pstr:string;
-
- procedure diskreset(disk:byte);
- var
-  r:registers;
- begin
-  r.ah:=0;
-  r.dl:=disk;
-  intr($13,r);
-  DiskError:=r.ah;
- end;
-
- {needed to put this in assembler or the program will hang}
- function dosrwsectors(disk:byte;sector:word;nsectors:word;rw:char;pbuffer:pointer):word;assembler;
- asm
-  mov ah,[rw]
-  or ah,$20
-  mov al,[disk]
-  mov dx,[sector]
-  mov cx,[nsectors]
-  push ds
-  lds bx,[pbuffer]
-  push bp
-  cmp ah,'W'
-  je @int26
-  int $25
-  jmp @fin
- @int26:
-  int $26
- @fin:
-  pop cx
-  pop bp
-  pop ds
-  jc @err
-  xor ax,ax
- @err:
-  mov al,ah
-  xor ah,ah
-  mov [diskerror],ax
-  mov ax,[nsectors]
- end;
-
- function rwsectors(disk,head,track,sector,nsect:byte;rw:char;pbuffer:pointer):word;
- var
-  r:registers;
-  i:integer;
- begin
-  if nobios then {access only trought DOS int25&26}
-   rwsectors:=dosrwsectors(disk,head*nsectors+track*nsectors*nheads+sector-1,nsectors,rw,pbuffer)
-  else
-  begin
-   i:=3;
-   if (rw='w')or(rw='W') then rw:=chr(3) else rw:=chr(2);
-   repeat
-    with r do
-    begin
-     dl:=disk;
-     dh:=head;
-     ch:=track;
-     cl:=sector;
-     al:=nsect;
-     es:=seg(pbuffer^);
-     bx:=ofs(pbuffer^);
-     ah:=ord(rw);
+    TBPB = packed record
+        BytesPerSector: Word;
+        SectorsPerCluster: Byte;
+        NumOfReservedSectors: Word;
+        NumOfFATs: Byte;
+        NumOfRootEntries: Word;
+        SectorsPerDisk: Word;
+        MediaDesc: Byte;
+        SectorsPerFAT: Word;
+        SectorsPerTrack: Word;
+        NumOfHeads: Word;
+        Unused: array [1..4] of Word;
+        DriveNumber: Byte;
+        Unused2: Byte;
+        ExtBootSignature: Byte;
+        VolSerialNumber: array [1..4] of Byte;
+        VolumeLabel: array [1..11] of Char;
+        FSType: array [1..8] of Byte;
     end;
-    intr($13,r);
-    dec(i);
-    if r.ah<>0 then diskreset(disk);
-   until (r.ah=0)or(i=0);
-   rwsectors:=r.al;
-   diskerror:=r.ah;
-  end;
- end;
 
- procedure readtrack(disk,head,track,nsectors:byte;ptrack:pointer);
- begin
-  rwsectors(disk,head,track,1,nsectors,'r',ptrack);
- end;
-
- procedure writetrack(disk,head,track,nsectors:byte;ptrack:pointer);
- begin
-  rwsectors(disk,head,track,1,nsectors,'w',ptrack);
- end;
-
- function upstring(s:string):string;
-  var
-   i:byte;
-  begin
-   for i:=1 to length(s) do s[i]:=upcase(s[i]);
-   upstring:=s;
-  end;
-
- {------------------------------------------------------------------------}
- function NetDrive(disco:byte):boolean;
- var
-  r:registers;
- begin
-  r.ax:=$4409;
-  r.bl:=disco+1;
-  intr($21,r);
-  if (FCarry and r.flags)<>0 then
-   NetDrive:=((r.ax and $9200)<>0)
-  else
-   NetDrive:=false;
- end;
-
- function FixedDisk(disco:byte):boolean;
- var
-  r:registers;
- begin
-  r.ax:=$4408;
-  r.bl:=disco+1;
-  intr($21,r);
-  FixedDisk:=(r.ax and 1)<>0
- end;
-
- procedure cambia(i:integer);
-  begin
-
-   case i of
-    1:writeln(chr(7),'Insert SOURCE floppy and press [ENTER]');
-    2:writeln(chr(7),'Insert DESTINATION floppy and press [ENTER]');
-   end;
-   readln;
-
-   diskreset(disco);
-   rwsectors(disco,0,0,1,1,'r',@sector0);
-   while diskerror<>0 do
-   begin
-    write(chr(7),'Error reading Sector 0:  (R)etry (C)ancel (I)gnore ');
-    readln(q);
-    case upcase(q) of
-     'C':halt;
-     'R':rwsectors(disco,0,0,1,1,'r',@sector0);
-     'I':exit;
+    TBootSector = packed record
+        JmpInstr: array [1..3] of Byte;
+        OemName: array [1..8] of Char;
+        BPB: TBPB;
+        BootCode: array [1..448] of Byte;
+        Signature: Word;
     end;
-   end;
 
-  end;
+    TRWSectorsFunc = function(Action: TRW; Track, Head, Sector, Count: Byte;
+                              BufPtr: Pointer): Word;
 
- procedure escribe(i,j:integer);
-  begin
-   write('Writing ',i:3,',',j:1,chr(13));
-   writetrack(disco,j,i,nsectors,pistai);
-   while diskerror<>0 do
-    begin
-     write(chr(7),'Writing Error: (R)etry or (C)ancel?');
-     readln(q);
-     case upcase(q) of
-     'C':halt;
-     'R':
-      begin
-       rwsectors(disco,0,0,1,1,'r',@sector0);
-       writetrack(disco,j,i,nsectors,pistai);
-      end;
-     end{case};
-    end{while};
-  end;
+const
+    MaxNumOfTracks = 84;
+    MaxNumOfSectors = 128;
+    MaxBytesPerSector = 4096;
 
-  PROCEDURE DosError;
-  BEGIN
-    WriteLn('This program requires DOS 3.20 or higher.');
+var
+    DiskError: Byte;
+    CursorShape: Word;
+    DriveLetter: Char;
+    FirstFileArg: Word;
+
+    {parameters}
+    Disk, NumOfHeads, NumOfSectors, NumOfTracks: Byte;
+    BytesPerSector: Word;
+    RWSectorsFunc: TRWSectorsFunc;
+
+function ResetDisk: Byte; assembler;
+asm
+    xor ah, ah
+    mov dl, [Disk]
+    int $13
+    mov al, ah
+end;
+
+{ Needed to put this in assembler or the program will hang. }
+function RWSectorsDosAsm(Action: TRW; Sector: Word; Count: Word;
+                         BufPtr: Pointer): Word; assembler;
+asm
+    mov ah, [Action]
+    mov al, [Disk]
+    mov dx, [Sector]
+    mov cx, [Count]
+    push ds
+    lds bx, [BufPtr]
+    push bp
+    cmp ah, RW_write
+    je @int26
+    int $25
+    jmp @fin
+@int26:
+    int $26
+@fin:
+    pop cx
+    pop bp
+    pop ds
+    jc @err
+    xor ax, ax
+@err:
+    mov [DiskError], ah
+    mov ax, [Count]
+end;
+
+function RWSectorsDos(Action: TRW; Track, Head, Sector, Count: Byte;
+                      BufPtr: Pointer): Word; far;
+begin
+    RWSectorsDos := RWSectorsDosAsm(Action, Head * NumOfSectors
+                                    + Track * NumOfSectors * NumOfHeads
+                                    + Sector - 1, Count, BufPtr);
+end;
+
+function RWSectorsBios(Action: TRW; Track, Head, Sector, Count: Byte;
+                       BufPtr: Pointer): Word; far;
+var r: Registers;
+    i: Integer;
+    Func: Byte;
+begin
+    i := 3;
+
+    if Action = RW_write then
+        Func := 3
+    else
+        Func := 2;
+
+    repeat
+        with r do
+        begin
+            dl := Disk;
+            dh := Head;
+            ch := Track;
+            cl := Sector;
+            al := Count;
+            es := Seg(BufPtr^);
+            bx := Ofs(BufPtr^);
+            ah := Func;
+        end;
+        Intr($13, r);
+        Dec(i);
+        if r.ah <> 0 then ResetDisk;
+    until (r.ah = 0) or (i = 0);
+
+    RWSectorsBios := r.al;
+    DiskError := r.ah;
+end;
+
+function ReadSectors(Track, Head, Sector, Count: Byte;
+                     BufPtr: Pointer): Boolean;
+begin
+    RWSectorsFunc(RW_read, Track, Head, Sector, Count, BufPtr);
+    ReadSectors := DiskError = 0;
+end;
+
+function WriteSectors(Track, Head, Sector, Count: Byte;
+                      BufPtr: Pointer): Boolean;
+begin
+    RWSectorsFunc(RW_write, Track, Head, Sector, Count, BufPtr);
+    WriteSectors := DiskError = 0;
+end;
+
+procedure Die(const msg: String);
+begin
+    WriteLn(msg);
     Halt(1);
-  END;
+end;
 
- procedure help;
-  begin
-   writeln('RAWRITE2 ver 1.1   8-5-2000');
-   writeln('A floppy disk image utility');
-   writeln('This program is (C) Miguel Angel Alvarez Cruz and is distributed under GPL 2.0');
-   writeln('Use only at your own risk!');
-   writeln('Usage:');
-   writeln('To make a disk image:		RAWRITE2 U: file [options]');
-   writeln('To copy a image to disk:	RAWRITE2 file [file file ...] U: [options]');
-   writeln(' where		"U:" is    A: o B:');
-   writeln('		"file" is the image file name');
-   writeln('		"options" is one of');
-   writeln('			/Fxxx	for xxx size floppy (default 1.44 MB)');
-   writeln('			/R	read size from sector 0 (only DOS floppies)');
-   writeln('			/N      do not use BIOS, use DOS instead');
-   writeln('		or a combination of');
-   writeln('			/Txx	xx=number of tracks (max 84, default=80)');
-   writeln('			/Sxx	xx=number of sectors (default=18)');
-   writeln('			/Bxxx	xxx=sector size in bytes (default=512)');
-   writeln('			/Hx	x=number of heads (1 or 2, default=2)');
-   writeln('The destination disk must be previously formatted');
-   writeln('Note: for non standard formats you will need the 2m or fdread utilities');
-   writeln('      Unfortunately Windows NT only supports standard floppy formats');
-   writeln('Note2: for any format but 1.44 Mb you should supply the format option');
-   writeln('       both reading or writing an image file, since the images are raw');
-   writeln('Press enter to read next page ...');
-   readln;
-   writeln('Floppy sizes option');
-   writeln('       /F360          360 KB (old 5" floppy)');
-   writeln('       /F720          720 KB ');
-   writeln('       /F800          800 KB (fdformat)');
-   writeln('       /F820          820 KB (fdformat)');
-   writeln('       /F120          1.2 MB (5" floppy)');
-   writeln('       /F144          1.44 MB (default)');
-   writeln('       /F148          1.48 MB (fdformat)');
-   writeln('       /F160          1.6 MB (fdformat)');
-   writeln('       /F164          1.64 MB (fdformat)');
-   writeln('       /F168          1.68 MB (fdformat)');
-   writeln('       /F172          1.72 MB (fdformat)');
-   writeln('       /F180          1.8 MB (2m)');
-   writeln('       /F188          1.88 MB (2m /m)');
-   writeln;
-   writeln('Some examples:');
-   writeln('Make a 1.44 MB floppy image:                rawrite2 a: image.144');
-   writeln('Make a 1.72 MB floppy image:                rawrite2 a: image.172 /f172');
-   writeln('Dump the last image to floppy:              rawrite2 image.172 a: /f172');
-   writeln('Make an image of a DOS unknown floppy:      rawrite2 a: image.img /r');
-   writeln('Dump several files to floppy:               rawrite2 file1 file2 a:');
-   halt(1);
-  end;
+function GetMemOrDie(Size: LongInt): Pointer;
+var Buf: Pointer;
+begin
+    if (MaxAvail < Size) then Die('Not enough memory');
+    GetMem(Buf, Size);
+    GetMemOrDie := Buf;
+end;
 
- {main}
- begin
+function ExpectKeys(const Accept: String): Char;
+var Key: Char;
 
-  IF Swap(DosVersion)<$314 THEN DosError;
-  if paramcount<2 then help;
-  disktoimage:=true;
-  nfiles:=1;
-  drive:=upstring(paramstr(1));
-  path[1]:=paramstr(2);
-  if (drive[2]<>':')or(length(drive)<>2) then
-  begin
-   disktoimage:=false;
-   while ((drive[2]<>':')or(length(drive)<>2)) and (nfiles<paramcount) do
-   begin
-    path[nfiles]:=paramstr(nfiles);
-    drive:=upstring(paramstr(nfiles+1));
-    inc(nfiles);
-    if nfiles>10 then
-    begin
-     writeln('The maximun number of image files is 10');
-     halt(1);
+    function ReadKey: Char; assembler;
+    asm
+        xor ah, ah
+        int 16h;
     end;
-   end;
-   dec(nfiles);
-  end;
-  if (drive[2]<>':')or(length(drive)<>2)or(drive[1]<'A')or(drive[1]>'Z')or(path[1]='/') then help;
-  if (drive<>'A:')and(drive<>'B:') then
-  begin
-   writeln('Supposed floppy drives under DOS are A: or B:');
-   writeln('If the destination disk is a hard disk this can destroy ALL data');
-   writeln('Proceed anyway? (y/n)');
-   readln(q);
-   if not(upstring(q)='Y') then halt;
-  end;
-  disco:=ord(drive[1])-ord('A');
 
-  if FixedDisk(disco) then
-  begin
-   writeln('Warning!, this disk does not seems a floppy drive.');
-   if not(disktoimage) then writeln('This can destroy all data on this drive!');
-   writeln('Proceed anyway? (y/n)');
-   readln(q);
-   if not(upstring(q)='Y') then halt;
-  end;
+begin
+    repeat
+        Key := Upcase(ReadKey);
+        if Pos(Key, Accept) <> 0 then break
+        else if Key = #3 then Die(''); { CTRL-C }
+    until False;
+    ExpectKeys := Key;
+end;
 
-  if NetDrive(disco) then
-  begin
-   writeln('Warning!, this disk seems a network/SUBST drive. Proceed anyway? (y/n)');
-   readln(q);
-   if not(upstring(q)='Y') then halt;
-  end;
+procedure ReadYOrHalt;
+var Key: Char;
+begin
+    Write(' (y/n)');
+    Key := ExpectKeys('YN');
+    WriteLn;
+    if Key = 'N' then Halt(1);
+end;
 
-  {default values}
-  ntracks:=80;
-  nsectors:=18;
-  nheads:=2;
-  bytessector:=512;
+function GetFileArg(Number: Word): String;
+begin
+    GetFileArg := ParamStr(FirstFileArg + Number - 1);
+end;
 
-  {command line parameters}
-  if paramcount>nfiles+1 then
-   for i:=nfiles+2 to paramcount do
-   begin
-     pstr:=upstring(paramstr(i));
-     if (pstr[1]<>'/')and(pstr[1]<>'-') then help;
-     j:=0;
-     case pstr[2] of
-      'T':
-	  begin
-	   val(copy(pstr,3,length(pstr)),ntracks,j);
-	   if ntracks>ntracksmax then
-	   begin
-	    writeln('Tracks must be less than ',ntracksmax+1);
-	    halt(1);
-	   end;
-	  end;
-      'S':
-	  begin
-	   val(copy(pstr,3,length(pstr)),nsectors,j);
-	   if nsectors>nsectorsmax then
-	   begin
-	    writeln('Sectors must be less than ',nsectorsmax+1);
-	    halt(1);
-	   end;
-	  end;
-      'B':
-	  begin
-	   val(copy(pstr,3,length(pstr)),bytessector,j);
-	   if (bytessector>bytessectormax)or(bytessector<128)or(bytessector mod 128<>0) then
-	   begin
-	    writeln('Bytes sector must be multiple of 128 and less than ',bytessectormax+1);
-	    halt(1);
-	   end;
-	  end;
-      'H':
-	  begin
-	   val(copy(pstr,3,length(pstr)),nheads,j);
-	   if (nheads<>1)and(nheads<>2) then
-	   begin
-	    writeln('Heads must be 1 or 2');
-	    halt(1);
-	   end;
-	  end;
-      'R': recon:=true;
-      'N': nobios:=true;
-      'F':
-	  begin
-	   val(copy(pstr,3,length(pstr)),k,j);
-	   case k of
-           {defaults: ntracks=80, nsectors=18, nheads=2}
-           360: begin ntracks:=40;nsectors:=9;end;
-	   720: nsectors:=9;
-           800: nsectors:=10;
-           820: begin ntracks:=82;nsectors:=10;end;
-           120: nsectors:=15;
-	   144: ;
-           160: nsectors:=20;
-           164: begin ntracks:=82;nsectors:=20;end;
-           168: nsectors:=21;
-	   172: begin ntracks:=82;nsectors:=21;end;
-	   180: begin ntracks:=82;nsectors:=22;end;
-           188: begin ntracks:=82;nsectors:=23;end;
-	   else
-	    help;
-	   end;
-	  end;
-     end;
-     if j<>0 then
-     begin
-      writeln('Error reading parameter:',pstr);
-      halt(1);
-     end;
-   end{for};
+procedure ClearLine;
+begin
+    Write(#13, '': 79, #13);
+end;
 
-  totalsectores:=longint(ntracks)*nsectors*nheads;
+function GetDriveNumber(DriveLetter: Char): Byte;
+begin
+    GetDriveNumber := Ord(DriveLetter) - Ord('A');
+end;
 
-  {check image path}
-  for i:=1 to nfiles do
-  begin
-   path[i]:=Fexpand(path[i]);
-   if drive=copy(path[i],1,2) then
-   begin
-    writeln('Error: can`t read/write image on the source disk');
-    halt(1);
-   end;
-  end;
+function GetBytesPerTrack: Word;
+begin
+    GetBytesPerTrack := BytesPerSector * NumOfSectors;
+end;
 
-  {read parameters from sector 0 if /R supplied}
-  if recon then
-  begin
-   if disktoimage then
-    cambia(1)
-   else
-   begin
-    cambia(2);
-    sector1:=sector0;
-    assign(imagef,path[1]);
-    {$i-}reset(imagef,1);{$i+}
-    {$i-}blockread(imagef,sector0,512);{$i+}
-    if ioresult<>0 then
+function GetBytesPerDisk: LongInt;
+begin
+    GetBytesPerDisk := LongInt(GetBytesPerTrack) * NumOfTracks * NumOfHeads;
+end;
+
+procedure WriteTrackOrDie(Track, Head: Byte; BufPtr: Pointer);
+var Sector0: TSector;
+begin
+    repeat
+        Write('Writing track ', Track, ' head ', Head, '': 2, #13);
+
+        if WriteSectors(Track, Head, 1, NumOfSectors, BufPtr) then break;
+
+        WriteLn(#7, 'Error writing track ', Track, ' head ', Head);
+        Write('   (R)etry or (C)ancel?', #13);
+        if ExpectKeys('RC') = 'C' then Halt(1);
+        ReadSectors(0, 0, 1, 1, @Sector0);
+    until False;
+end;
+
+function ReadSectorOrDie(Track, Head, Sector: Byte; BufPtr: Pointer;
+                         CanIgnore: Boolean): Boolean;
+var Action: Char;
+begin
+    ReadSectorOrDie := True;
+    repeat
+        Write('Reading track ', Track,
+                      ' head ', Head,
+                    ' sector ', Sector, '   ', #13);
+
+        if ReadSectors(Track, Head, Sector, 1, BufPtr) then break;
+
+        WriteLn(#7, 'Error reading track ', Track,
+                                  ' head ', Head,
+                                ' sector ', Sector);
+
+        if CanIgnore then
+        begin
+            Write('   (R)etry (I)gnore (C)ancel?', #13);
+            Action := ExpectKeys('RIC');
+        end
+        else
+        begin
+            Write('   (R)etry (C)ancel?', #13);
+            Action := ExpectKeys('RC');
+        end;
+
+        case Action of
+            'C': Halt(1);
+            'I':
+            begin
+                ReadSectorOrDie := False;
+                break;
+            end;
+        end;
+    until False;
+end;
+
+procedure PrintGeometry;
+begin
+    WriteLn('Disk ', DriveLetter, ':    Heads: ', NumOfHeads,
+            '    Tracks: ', NumOfTracks,
+            '    Sectors: ', NumOfSectors,
+            '    Bytes per sector: ', BytesPerSector);
+end;
+
+procedure GetGeometryFromBPB(const BPB: TBPB);
+begin
+    BytesPerSector := BPB.BytesPerSector;
+    NumOfSectors := BPB.SectorsPerTrack;
+    NumOfHeads := BPB.NumOfHeads;
+
+    if (BPB.SectorsPerDisk = 0)
+       or (BytesPerSector = 0)
+       or (BytesPerSector mod 128 <> 0)
+       or not(NumOfHeads in [1, 2])
+       or (NumOfSectors = 0) then
+        Die('Sector 0 has wrong format');
+
+    NumOfTracks := BPB.SectorsPerDisk div (NumOfSectors * NumOfHeads);
+end;
+
+procedure DumpDiskToFile(const Filename: String);
+var Track, Head, Sector: Byte;
+    ImageFile: File;
+    SectorBufPtr: ^TSector;
+    BytesPerTrack: Word;
+    TrackBufPtr: Pointer;
+    NumOfSectorsRead: Word;
+begin
+    BytesPerTrack := GetBytesPerTrack;
+    TrackBufPtr := GetMemOrDie(BytesPerTrack);
+    NumOfSectorsRead := 0;
+    Assign(ImageFile, Filename);
+    Rewrite(ImageFile, 1);
+
+    for Track := 0 to NumOfTracks - 1 do
     begin
-     writeln('Error reading image file');
-     halt(1);
+        for Head := 0 to NumOfHeads - 1 do
+        begin
+           Write('Reading track ', Track, ' head ', Head, #13);
+
+           if ReadSectors(Track, Head, 1, NumOfSectors, TrackBufPtr) then
+               Inc(NumOfSectorsRead, NumOfSectors)
+           else
+           begin { Error reading track? Retry reading sectors. }
+               SectorBufPtr := TrackBufPtr;
+               for Sector := 1 to NumOfSectors do
+               begin
+                   if (ReadSectorOrDie(Track, Head, Sector, SectorBufPtr,
+                                       True)) then
+                      Inc(NumOfSectorsRead);
+                   SectorBufPtr := Addr(SectorBufPtr^[BytesPerSector]);
+               end;
+               ClearLine;
+           end;
+
+           BlockWrite(ImageFile, TrackBufPtr^, BytesPerTrack);
+       end;
     end;
-    close(imagef);
-    if (sector0[$0b]<>sector1[$0b])or(sector0[$0c]<>sector1[$0c])or
-       (sector0[$13]<>sector1[$13])or(sector0[$14]<>sector1[$14])or
-       (sector0[$18]<>sector1[$18])or(sector0[$19]<>sector1[$19])or
-       (sector0[$1a]<>sector1[$1a])then
-       writeln('Floppy sector 0 parameters and image sector 0 parameters differ');
-   end;
-   bytessector:=sector0[$0b]+sector0[$0c]*256;
-   totalsectores:=sector0[$13]+sector0[$14]*256;
-   nsectors:=sector0[$18]+sector0[$19]*256;
-   nheads:=sector0[$1a];
-   {media:=sector0[$15];}
-   if (totalsectores=0)or(bytessector=0)or(bytessector mod 128<>0)
-     or(nheads<1)or(nheads>2)or(nsectors=0) then
-   begin
-    writeln('Sector 0 has wrong format');
-    halt(1);
-   end;
-   ntracks:=totalsectores div (nsectors*nheads);
-  end;
 
-  bytespista:=bytessector*nsectors;
+    Close(ImageFile);
+    FreeMem(TrackBufPtr, BytesPerTrack);
 
-  {check memory}
-  if (maxavail<bytespista) then
-   begin
-    writeln('Not enough memory');
-    halt(1);
-   end;
+    WriteLn('Reading completed: ', NumOfSectorsRead, ' of ',
+            NumOfSectors * NumOfTracks * NumOfHeads,
+            ' sectors have been read')
+end;
 
-  {check image file}
-  s:=0;
-  for i:=1 to nfiles do
-  begin
-   assign(imagef,path[i]);
-   if not(disktoimage) then
-   begin
-    {$i-}reset(imagef,1);{$i+}
-    if ioresult<>0 then
+procedure CheckOutputFile(const Filename: String; Size: LongInt);
+var ImageFile: File;
+    Fullname: String;
+begin
+    Fullname := FExpand(Filename);
+
+    if (DiskFree(GetDriveNumber(Fullname[1]) + 1) < Size) then
+        Die('Not enough disk space for image file');
+
+    Assign(ImageFile, Fullname);
+    {$i-}Reset(ImageFile, 1);{$i+}
+    if IOResult = 0 then
     begin
-     writeln('Error reading image file');
-     halt(1);
+        Close(ImageFile);
+        Write('Destination file exists. Overwrite?');
+        ReadYOrHalt;
     end;
-    s:=s+filesize(imagef);
-    if s>longint(bytessector)*totalsectores*nheads then
-    begin
-     writeln('Warning: This image file does not fit in the floppy:',path[i]);
-    end;
-   end
-   else
-   begin
-    if (diskfree(ord(path[i][1])-ord('A')+1)<longint(bytessector)*(totalsectores+1)) then
-    begin
-     writeln('Not enough disk space for image file');
-     halt(1);
-    end;
-    {$i-}reset(imagef,1);close(imagef);{$i+}
-    if ioResult=0 then
-    begin
-     writeln('Destination file exists. Overwrite? (y/n)');
-     read(q);
-     if not(upstring(q)='Y') then halt;
-    end;
-    {$i-}rewrite(imagef,1);{$i+}
-    if ioresult<>0 then
-    begin
-     writeln('Error writing to disk, write protected?');
-     halt(1);
-    end;
-   end{if};
-   close(imagef);
-  end;
 
-  writeln('Disk ',drive,'  Heads:',nheads,'    Tracks:',ntracks,
-	   '    Sectors:',nsectors,'    Bytes sector:',bytessector);
+    {$i-}Rewrite(ImageFile, 1);{$i+}
+    if IOResult <> 0 then Die('Error writing to disk, write protected?');
+    Close(ImageFile)
+end;
 
-  getmem(pistai,bytespista);{pistai es el buffer entrada-salida}
+procedure DoDiskToImage(const Filename: String; FindOutGeometry: Boolean);
+var BootSector: TBootSector;
+begin
+    if FindOutGeometry then
+    begin
+        ReadSectorOrDie(0, 0, 1, @BootSector, False);
+        GetGeometryFromBPB(BootSector.BPB);
+    end;
 
-  assign(imagef,path[1]);
-  if disktoimage then
-  begin
-   rewrite(imagef,1);
-   for i:=0 to ntracks-1 do
-   begin
-     for j:=0 to nheads-1 do
-     begin
-      write('Reading ',i:3,',',j:1,'       ',chr(13));
-      readtrack(disco,j,i,nsectors,pistai);
-      if diskerror<>0 then {Error reading track? Retry reading sectors}
-      begin
-       psector:=pistai;
-       for k:=1 to nsectors do
-       begin
-	 rwsectors(disco,j,i,k,1,'r',psector);
-	 while diskerror<>0 do
-	 begin
-	   writeln(chr(7),'Error reading sector:',k,' track:',i,' head:',j);
-	   write('   (R)etry (I)gnore (C)ancel?');
-	   readln(q);
-	   case upcase(q) of
-	   'R':rwsectors(disco,j,i,k,1,'r',psector);
-	   'C':halt;
-	   'I':diskerror:=0;
-	   end{case};
-	 end{while};
-         psector:=addr(psector^[bytessector]);
-       end{for};
-     end{if};
-     blockwrite(imagef,pistai^,bytespista);
-    end{for j};
-   end{for i};
-  end
-  else
-  begin
-   l:=1;
-   reset(imagef,1);
-   for i:=0 to ntracks-1 do
-   begin
-     for j:=0 to nheads-1 do
-     begin
-      blockread(imagef,pistai^,bytespista,k);
-      while (k<>bytespista)and(l<nfiles) do
-      begin
-       close(imagef);
-       inc(l);
-       assign(imagef,path[l]);
-       reset(imagef,1);
-       blockread(imagef,(pchar(pistai)+k)^,bytespista-k,m);
-       k:=k+m;
-      end;
-      escribe(i,j);
-      if k<>bytespista then break;
-     end{for j};
-     if k<>bytespista then break;
-   end{for i};
-  end;
-  close(imagef);
+    CheckOutputFile(Filename, GetBytesPerDisk);
+    PrintGeometry;
+    DumpDiskToFile(Filename);
+end;
 
- end.
+procedure WriteFilesToDisk(NumOfFiles: Word);
+var Track, Head: Byte;
+    FileNum, Len, Len2: Word;
+    ImageFile: File;
+    BytesPerTrack: Word;
+    TrackBufPtr: Pointer;
+begin
+    BytesPerTrack := GetBytesPerTrack;
+    TrackBufPtr := GetMemOrDie(BytesPerTrack);
+    FileNum := 1;
+    Assign(ImageFile, GetFileArg(1));
+    Reset(ImageFile, 1);
+
+    for Track := 0 to NumOfTracks - 1 do
+    begin
+        for Head := 0 to NumOfHeads - 1 do
+        begin
+            BlockRead(ImageFile, TrackBufPtr^, BytesPerTrack, Len);
+            while (Len <> BytesPerTrack) and (FileNum < NumOfFiles) do
+            begin
+                Close(ImageFile);
+                Inc(FileNum);
+                Assign(ImageFile, GetFileArg(FileNum));
+                Reset(ImageFile, 1);
+                BlockRead(ImageFile, (PChar(TrackBufPtr) + Len)^,
+                          BytesPerTrack - Len, Len2);
+                Inc(Len, Len2);
+            end;
+            WriteTrackOrDie(Track, Head, TrackBufPtr);
+            if Len <> BytesPerTrack then break;
+        end;
+        if Len <> BytesPerTrack then break;
+    end;
+
+    Close(ImageFile);
+    FreeMem(TrackBufPtr, BytesPerTrack);
+end;
+
+procedure CheckInputFiles(NumOfFiles: Word; Size: LongInt);
+var ImageFile: File;
+    ImageSize: LongInt;
+    Filename: String;
+    i: Integer;
+begin
+    ImageSize := 0;
+    for i := 1 to NumOfFiles do
+    begin
+        Filename := GetFileArg(i);
+        Assign(ImageFile, Filename);
+        {$i-}Reset(ImageFile, 1);{$i+}
+        if IOResult <> 0 then Die('Error reading image file');
+        Inc(ImageSize, FileSize(ImageFile));
+        Close(ImageFile);
+        if ImageSize > Size then
+            WriteLn('Warning: file ', Filename, ' won''t fit to the floppy');
+    end;
+end;
+
+procedure DoImageToDisk(NumOfFiles: Word; FindOutGeometry: Boolean);
+var DiskBS, ImageBS: TBootSector;
+    ImageFile: File;
+begin
+    if FindOutGeometry then
+    begin
+        ReadSectorOrDie(0, 0, 1, @DiskBS, False);
+        ClearLine;
+
+        Assign(ImageFile, GetFileArg(1));
+        {$i-}Reset(ImageFile, 1);
+        BlockRead(ImageFile, ImageBS, SizeOf(ImageBS));{$i+}
+        if IOResult <> 0 then Die('Error reading image file');
+        Close(ImageFile);
+
+        if (ImageBS.BPB.BytesPerSector <> DiskBS.BPB.BytesPerSector)
+           or (ImageBS.BPB.SectorsPerDisk <> DiskBS.BPB.SectorsPerDisk)
+           or (ImageBS.BPB.SectorsPerTrack <> DiskBS.BPB.SectorsPerTrack)
+           or (ImageBS.BPB.NumOfHeads <> DiskBS.BPB.NumOfHeads) then
+             WriteLn('Floppy sector 0 parameters and image sector 0 parameters differ');
+
+        GetGeometryFromBPB(ImageBS.BPB);
+    end;
+
+    CheckInputFiles(NumOfFiles, GetBytesPerDisk);
+    PrintGeometry;
+    WriteFilesToDisk(NumOfFiles);
+end;
+
+procedure Help;
+begin
+WriteLn('RAWRITE2      A floppy disk image utility      Version 2.0    16-06-2023');
+WriteLn('(c) 2023 Vitaly Sinilin, (c) 2000 Miguel Angel Alvarez Cruz');
+WriteLn('This program is distributed under GPL 2.0. Use only at your own risk!');
+WriteLn;
+WriteLn('Usage: to make a disk image            RAWRITE2 U: file [options]');
+WriteLn('       to copy an image to disk        RAWRITE2 file(s)... U: [options]');
+WriteLn;
+WriteLn('where  "U:"    is A: or B:');
+WriteLn('       "file"  is the image file name');
+WriteLn;
+WriteLn('Options:');
+WriteLn('       /Fxxx   for xxx size floppy (default 1.44 MB)');
+WriteLn('       /R      read size from sector 0 (only DOS floppies)');
+WriteLn('       /N      do not use BIOS, use DOS instead');
+WriteLn('       /Txx    xx = number of tracks (max 84, default 80)');
+WriteLn('       /Sxx    xx = number of sectors (default 18)');
+WriteLn('       /Bxxx   xxx = sector size in bytes (default 512)');
+WriteLn('       /Hx     x = number of heads (1 or 2, default 2)');
+WriteLn;
+WriteLn('The destination disk must be previously formatted.');
+WriteLn('Note:  For non-standard formats you will need the 2m or fdread utilities.');
+WriteLn('       Unfortunately, Windows NT only supports standard floppy formats.');
+WriteLn('Note2: For any format but 1.44 MB you should supply the format option for');
+WriteLn('       both reading or writing an image file, since the images are raw.');
+Write('Press ENTER to read next page...');
+ExpectKeys(#13);
+WriteLn;
+WriteLn('Floppy size options:');
+WriteLn('       /F360          360 KB  (old 5.25" floppy)');
+WriteLn('       /F720          720 KB');
+WriteLn('       /F800          800 KB  (fdformat)');
+WriteLn('       /F820          820 KB  (fdformat)');
+WriteLn('       /F120          1.2 MB  (5.25" floppy)');
+WriteLn('       /F144          1.44 MB (default)');
+WriteLn('       /F148          1.48 MB (fdformat)');
+WriteLn('       /F160          1.6 MB  (fdformat)');
+WriteLn('       /F164          1.64 MB (fdformat)');
+WriteLn('       /F168          1.68 MB (fdformat)');
+WriteLn('       /F172          1.72 MB (fdformat)');
+WriteLn('       /F180          1.8 MB  (2m)');
+WriteLn('       /F188          1.88 MB (2m /m)');
+WriteLn;
+WriteLn('Some examples: ');
+WriteLn('       make a 1.44 MB floppy image              RAWRITE2 A: 144.ima');
+WriteLn('       make a 1.72 MB floppy image              RAWRITE2 A: 172.ima /f172');
+WriteLn('       write the last image to a floppy         RAWRITE2 172.ima A: /f172');
+WriteLn('       make an image of an unknown DOS floppy   RAWRITE2 A: disk.ima /r');
+WriteLn('       dump several files to a floppy           RAWRITE2 file1 file2 A:');
+Halt(1);
+end;
+
+procedure Main;
+var FindOutGeometry, DiskToImage: Boolean;
+    Filename, Arg: String;
+    ImageFile: File;
+    NumOfFiles: Word;
+    i: Integer;
+
+    function GetDriveLetter(const s: String): Char;
+    var Letter: Char;
+    begin
+        GetDriveLetter := #0;
+        if (Length(s) = 2) and (s[2] = ':') then
+        begin
+            Letter := Upcase(s[1]);
+            if Letter in ['A'..'Z'] then
+               GetDriveLetter := Letter;
+        end;
+    end;
+
+    procedure ConfirmIfProceed;
+    begin
+        Write('Proceed anyway?');
+        ReadYOrHalt;
+    end;
+
+    procedure InvalidOption(const Option: String);
+    begin
+        WriteLn('Invalid option: ', Option);
+        Halt(1);
+    end;
+
+    function GetOptionValue(const Option: String): Word;
+    var Value: Word;
+        Code: Word;
+    begin
+        Val(Copy(Option, 3, Length(Option)), Value, Code);
+        if Code <> 0 then InvalidOption(Option);
+        GetOptionValue := Value;
+    end;
+
+    function IsRemoteDrive(Disk: Byte): Boolean; assembler;
+    asm
+        mov ax, $4409;
+        mov bl, [Disk]
+        inc bl
+        int $21
+        jc @err
+        and dh, $90
+        jnz @remote
+        xor al, al
+        jmp @coda
+    @err:
+        and ax, $9200
+        jz @coda
+    @remote:
+        mov al, 1
+    @coda:
+    end;
+
+    function IsFixedDisk(Disk: Byte): Boolean; assembler;
+    asm
+        mov ax, $4408
+        mov bl, [Disk]
+        inc bl
+        int $21
+    end;
+
+    function GetCursorShape: Word; assembler;
+    asm
+        mov ah, 3
+        xor bh, bh
+        int $10
+        mov ax, cx
+    end;
+
+    procedure SetCursorShape(Shape: Word); assembler;
+    asm
+        mov ah, $0F { get current video mode into AL }
+        int $10
+        mov ah, $01 { set text-mode cursor shape }
+        mov cx, [Shape]
+        int $10
+    end;
+
+    procedure HideCursor;
+    begin
+        SetCursorShape($2000);
+    end;
+
+    procedure OnExit; far;
+    begin
+        SetCursorShape(CursorShape);
+    end;
+
+begin
+    if Swap(DosVersion) < $314 then
+        Die('This program requires DOS 3.20 or higher');
+
+    ExitProc := @OnExit;
+    CursorShape := GetCursorShape;
+    HideCursor;
+
+    if ParamCount < 2 then Help;
+
+    { Find drive letter argument. }
+    for i := 1 to ParamCount do
+    begin
+        DriveLetter := GetDriveLetter(ParamStr(i));
+        if DriveLetter <> #0 then break;
+    end;
+
+    if DriveLetter = #0 then Die('Drive letter is not specified')
+    else if i = 1 then
+    begin
+        DiskToImage := True;
+        NumOfFiles := 1;
+        FirstFileArg := 2;
+    end
+    else
+    begin
+        DiskToImage := False;
+        NumOfFiles := i - 1;
+        FirstFileArg := 1;
+    end;
+
+    { Check image path. }
+    for i := 1 to NumOfFiles do
+    begin
+        Filename := FExpand(GetFileArg(i));
+        if DriveLetter = Filename[1] then
+            if DiskToImage then
+                Die('Can''t write image to the source disk')
+            else
+                Die('Can''t read image from the destination disk');
+    end;
+
+    { Default values. }
+    RWSectorsFunc := RWSectorsBios;
+    FindOutGeometry := False;
+    NumOfTracks := 80;
+    NumOfSectors := 18;
+    NumOfHeads := 2;
+    BytesPerSector := 512;
+
+    { Command line parameters. }
+    for i := NumOfFiles + 2 to ParamCount do
+    begin
+        Arg := ParamStr(i);
+
+        if (Length(Arg) < 2)
+           or not(Arg[1] in ['/', '-']) then InvalidOption(Arg);
+
+        case Upcase(Arg[2]) of
+            'T':
+            begin
+                NumOfTracks := GetOptionValue(Arg);
+                if NumOfTracks > MaxNumOfTracks then
+                begin
+                    WriteLn('Tracks must be less than ', MaxNumOfTracks + 1);
+                    Halt(1);
+                end;
+            end;
+            'S':
+            begin
+                NumOfSectors := GetOptionValue(Arg);
+                if NumOfSectors > MaxNumOfSectors then
+                begin
+                    WriteLn('Sectors must be less than ',
+                            MaxNumOfSectors + 1);
+                    Halt(1);
+                end;
+            end;
+            'B':
+            begin
+                BytesPerSector := GetOptionValue(Arg);
+                if (BytesPerSector > MaxBytesPerSector)
+                   or (BytesPerSector < 128)
+                   or (BytesPerSector mod 128 <> 0) then
+                begin
+                    WriteLn('Bytes per sector must be multiple of 128' +
+                            ' and less than ',
+                            MaxBytesPerSector + 1);
+                    Halt(1);
+                end;
+            end;
+            'H':
+            begin
+                NumOfHeads := GetOptionValue(Arg);
+                if not(NumOfHeads in [1, 2]) then Die('Heads must be 1 or 2');
+            end;
+            'R': FindOutGeometry := True;
+            'N': RWSectorsFunc := RWSectorsDos;
+            'F':
+            case GetOptionValue(Arg) of
+                {defaults: NumOfTracks := 80; NumOfSectors := 18; NumOfHeads := 2}
+                360: begin NumOfTracks := 40; NumOfSectors := 9; end;
+                720: begin                    NumOfSectors := 9; end;
+                800: begin                    NumOfSectors := 10; end;
+                820: begin NumOfTracks := 82; NumOfSectors := 10; end;
+                120: begin                    NumOfSectors := 15; end;
+                144: ;
+                160: begin                    NumOfSectors := 20; end;
+                164: begin NumOfTracks := 82; NumOfSectors := 20; end;
+                168: begin                    NumOfSectors := 21; end;
+                172: begin NumOfTracks := 82; NumOfSectors := 21; end;
+                180: begin NumOfTracks := 82; NumOfSectors := 22; end;
+                188: begin NumOfTracks := 82; NumOfSectors := 23; end;
+                else InvalidOption(Arg);
+            end;
+            else InvalidOption(Arg);
+        end;
+    end;
+
+    if not(DiskToImage) and not(DriveLetter in ['A', 'B']) then
+    begin
+        WriteLn('Supposed floppy drives under DOS are A: or B:');
+        WriteLn('If the destination disk is a hard disk this can destroy ALL data');
+        ConfirmIfProceed;
+    end;
+
+    Disk := GetDriveNumber(DriveLetter);
+
+    if IsFixedDisk(Disk) then
+    begin
+        WriteLn('Warning! ', DriveLetter,
+                ': does not seem to be a floppy drive.');
+        if not(DiskToImage) then
+            WriteLn('This can destroy all data on this drive!');
+        ConfirmIfProceed;
+    end;
+
+    if IsRemoteDrive(Disk) then
+    begin
+        WriteLn('Warning! ', DriveLetter,
+                ': seems to be a network/SUBST drive.');
+        ConfirmIfProceed;
+    end;
+
+    if DiskToImage then
+        DoDiskToImage(GetFileArg(1), FindOutGeometry)
+    else
+        DoImageToDisk(NumOfFiles, FindOutGeometry);
+end;
+
+begin Main end.
