@@ -57,13 +57,4 @@ Christoph H. Hochst„tter, for fdformat. I took some ideas from here.
 
 CHANGELOG
 
-1.1: 8/5/2000
-Added a lot more of /Fxxx
-Added some more checking to detect hard disks and subst/network units
-Added /N switch to use dos int 25 & 26 instead BIOS int 13
-Now it can have several (max 10) input files if dumping image to floppy (works
-like unix command "cat file1 file2 ..fileN")
-The help screen have been expanded a bit.
-
-1.0: 23/4/2000
-First release published.
+See the NEWS file.
